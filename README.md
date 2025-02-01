@@ -81,10 +81,10 @@ Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTIN
 
 - Varun Poojari - Project Lead
 - Dr. Dhanashri Wategaonkar - Mentor
-- Shreny Jain - Hardware Design
+- Shreny Jain - Design & Documentation
 - Aayush Sandhane - Software Development
 - Dhruv More - Testing
-- Rachit Patekar - Documentation
+- Rachit Patekar - Hardware Design
 - Shardul Shekatkar - Integration
 
 ## License
