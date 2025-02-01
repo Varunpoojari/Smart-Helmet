@@ -1,0 +1,192 @@
+/*
+ * Smart Helmet - IoT-Based Safety System
+ * Created by: Varun Poojari
+ * Version: 1.0
+ * 
+ * This code implements a smart helmet system with multiple safety features
+ * including helmet detection, alcohol sensing, and crash detection.
+ */
+
+// Include required libraries
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
+#include <Wire.h>
+
+// Pin Definitions
+#define IR_SENSOR_PIN A0      // Helmet detection
+#define ALCOHOL_SENSOR_PIN A1  // MQ3 alcohol sensor
+#define VIBRATION_SENSOR_PIN 2 // SW420 vibration sensor
+#define GYRO_SDA_PIN A4       // GY61 gyroscope SDA
+#define GYRO_SCL_PIN A5       // GY61 gyroscope SCL
+#define ENGINE_CONTROL_PIN 13  // Engine control output
+#define GSM_TX_PIN 10         // GSM module TX
+#define GSM_RX_PIN 11         // GSM module RX
+#define GPS_TX_PIN 8          // GPS module TX
+#define GPS_RX_PIN 9          // GPS module RX
+
+// Create objects for communication
+SoftwareSerial gsmModule(GSM_TX_PIN, GSM_RX_PIN);
+SoftwareSerial gpsModule(GPS_TX_PIN, GPS_RX_PIN);
+TinyGPSPlus gps;
+
+// Threshold values
+const int ALCOHOL_THRESHOLD = 400;    // Alcohol sensor threshold
+const int VIBRATION_THRESHOLD = 500;  // Crash detection threshold
+const float GYRO_THRESHOLD = 30.0;    // Angular velocity threshold
+const unsigned long ALERT_DELAY = 30000; // 30 second delay for false positive prevention
+
+// Global variables
+float gyroX, gyroY, gyroZ;
+bool isHelmetWorn = false;
+bool isEngineEnabled = false;
+bool crashDetected = false;
+unsigned long crashDetectionTime = 0;
+
+void setup() {
+  // Initialize serial communication
+  Serial.begin(9600);
+  gsmModule.begin(9600);
+  gpsModule.begin(9600);
+  Wire.begin();
+  
+  // Configure pins
+  pinMode(IR_SENSOR_PIN, INPUT);
+  pinMode(ALCOHOL_SENSOR_PIN, INPUT);
+  pinMode(VIBRATION_SENSOR_PIN, INPUT);
+  pinMode(ENGINE_CONTROL_PIN, OUTPUT);
+  
+  // Initial engine state
+  digitalWrite(ENGINE_CONTROL_PIN, LOW);
+  
+  // Initialize sensors
+  initializeSensors();
+}
+
+void loop() {
+  // Check helmet status
+  checkHelmetStatus();
+  
+  // Check alcohol level
+  checkAlcoholLevel();
+  
+  // Update engine control
+  updateEngineStatus();
+  
+  // Check for crashes if helmet is worn
+  if (isHelmetWorn) {
+    checkForCrash();
+  }
+  
+  // Process any pending alerts
+  processAlerts();
+  
+  delay(100); // Small delay for stability
+}
+
+void initializeSensors() {
+  // Initialize gyroscope
+  Wire.beginTransmission(0x68); // Gyroscope I2C address
+  Wire.write(0x6B);  // PWR_MGMT_1 register
+  Wire.write(0);     // Wake up sensor
+  Wire.endTransmission(true);
+}
+
+void checkHelmetStatus() {
+  int irValue = analogRead(IR_SENSOR_PIN);
+  isHelmetWorn = (irValue < 500); // Adjust threshold as needed
+  
+  if (!isHelmetWorn) {
+    disableEngine("Helmet not worn properly");
+  }
+}
+
+void checkAlcoholLevel() {
+  int alcoholValue = analogRead(ALCOHOL_SENSOR_PIN);
+  
+  if (alcoholValue > ALCOHOL_THRESHOLD) {
+    disableEngine("Alcohol detected");
+    sendAlert("Alcohol level above limit. Engine disabled.");
+  }
+}
+
+void checkForCrash() {
+  // Read vibration sensor
+  int vibrationValue = analogRead(VIBRATION_SENSOR_PIN);
+  
+  // Read gyroscope
+  Wire.beginTransmission(0x68);
+  Wire.write(0x43);  // Starting with register 0x43 (GYRO_XOUT_H)
+  Wire.endTransmission(false);
+  Wire.requestFrom(0x68, 6, true);  // Request 6 bytes
+  
+  gyroX = Wire.read() << 8 | Wire.read();
+  gyroY = Wire.read() << 8 | Wire.read();
+  gyroZ = Wire.read() << 8 | Wire.read();
+  
+  // Check for crash conditions
+  if (vibrationValue > VIBRATION_THRESHOLD || 
+      abs(gyroX) > GYRO_THRESHOLD || 
+      abs(gyroY) > GYRO_THRESHOLD || 
+      abs(gyroZ) > GYRO_THRESHOLD) {
+    
+    if (!crashDetected) {
+      crashDetected = true;
+      crashDetectionTime = millis();
+      Serial.println("Possible crash detected! Waiting for confirmation...");
+    }
+  }
+}
+
+void processAlerts() {
+  if (crashDetected && (millis() - crashDetectionTime > ALERT_DELAY)) {
+    sendEmergencyAlert();
+    crashDetected = false;
+  }
+}
+
+void sendEmergencyAlert() {
+  // Get GPS location
+  float lat = 0, lng = 0;
+  
+  while (gpsModule.available()) {
+    if (gps.encode(gpsModule.read())) {
+      if (gps.location.isValid()) {
+        lat = gps.location.lat();
+        lng = gps.location.lng();
+      }
+    }
+  }
+  
+  // Send SMS alert
+  gsmModule.println("AT+CMGF=1"); // Set SMS text mode
+  delay(100);
+  gsmModule.println("AT+CMGS=\"+1234567890\""); // Replace with emergency number
+  delay(100);
+  
+  // Compose message
+  String message = "EMERGENCY: Crash detected!\n";
+  message += "Location: ";
+  message += String(lat, 6);
+  message += ",";
+  message += String(lng, 6);
+  
+  gsmModule.println(message);
+  delay(100);
+  gsmModule.write(26); // Send SMS (Ctrl+Z)
+}
+
+void updateEngineStatus() {
+  isEngineEnabled = isHelmetWorn && !crashDetected;
+  digitalWrite(ENGINE_CONTROL_PIN, isEngineEnabled ? HIGH : LOW);
+}
+
+void disableEngine(String reason) {
+  isEngineEnabled = false;
+  digitalWrite(ENGINE_CONTROL_PIN, LOW);
+  Serial.println("Engine disabled: " + reason);
+}
+
+void sendAlert(String message) {
+  Serial.println("ALERT: " + message);
+  // Add GSM alert functionality if needed
+}
